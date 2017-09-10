@@ -136,9 +136,16 @@ var parseObj = (objectData) => {
         indices: unpacked.indices
     }
 }
-
-let c = document.getElementById('c');
+let sa = (e,k,v) => e.setAttribute(k,v);
+let [c,ui,met,rad,bad] = ['c','s','meter','rad','bad'].map(s=>document.getElementById(s));
 [c.width, c.height] = [window.innerWidth, window.innerHeight];
+sa(met,'cx',c.width-100);
+sa(met,'cy',c.height-100);
+sa(met,'r',100);
+sa(rad,'d',`M ${c.width-100} ${c.height-100} l 0 -100`);
+sa(rad,'style','stroke:#ff0000;stroke-width:10');
+sa(bad,'style','stroke:#0000ff;stroke-width:10');
+sa(bad,'d',`M ${c.width-100} ${c.height-100} l 0 -100`);
 let gl = c.getContext('webgl');
 gl.clearColor(0.39,0.81,0.95,1.0);
 gl.clearDepth(1.0);
@@ -147,11 +154,15 @@ gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 gl.enable(gl.DEPTH_TEST);
 gl.depthFunc(gl.LEQUAL);
 
-let vertShader = `
+let sPrefix = `
 attribute vec3 aVertexPosition;
-attribute vec4 aVertexColor;
 uniform mat4 uMVMatrix;
 uniform mat4 uPMatrix;
+`;
+
+let vertShader = `
+${sPrefix}
+attribute vec4 aVertexColor;
 varying lowp vec4 vColor;
 void main(void) {
   gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
@@ -167,10 +178,8 @@ void main(void) {
 `;
 
 let imgVertShader = `
-attribute vec3 aVertexPosition;
+${sPrefix}
 attribute vec2 aTextureCoord;
-uniform mat4 uMVMatrix;
-uniform mat4 uPMatrix;
 varying highp vec2 vTextureCoord;
 void main(void) {
   mat4 i = uMVMatrix;
@@ -400,6 +409,47 @@ const loadVColorModel = async (filename, colors) =>{
     };
 }
 
+
+let makeIsland = () => {
+    let segments = Math.floor(Math.random()*20)+3;
+    let r = 150;
+    let isPts = Array(segments).fill(0).map((e,i)=>[
+        Math.cos(i*2*Math.PI/segments)*r*Math.max(Math.random(),.5),
+        0.0,
+        Math.sin(i*2*Math.PI/segments)*r*Math.max(Math.random(),.5)]);
+    isPts.unshift([0,50,0]);
+
+    const vertexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+    
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(isPts.flatten()), gl.STATIC_DRAW);
+
+    const colorBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(isPts.map(x=>[0,0,0,1])), gl.STATIC_DRAW);
+
+    return {
+        vertexBuffer,
+        colorBuffer,
+        vertices: isPts
+    };
+}
+
+let drawIsland = (o) => {
+    
+    gl.bindBuffer(gl.ARRAY_BUFFER, o.colorBuffer);
+    gl.vertexAttribPointer(vertexColorAttribute, 4, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, o.vertexBuffer);
+    gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
+
+
+    gl.uniformMatrix4fv(uniformProjectionMatrix, false, new Float32Array(perspectiveMatrix.flatten()));
+    gl.uniformMatrix4fv(uniformModelViewMatrix, false, new Float32Array(mvMatrix.flatten()));
+    gl.drawArrays(gl.TRIANGLE_FAN, 0, o.vertices.length);
+    // gl.drawElements(gl.TRIANGLES, o.indices.length, gl.UNSIGNED_SHORT, 0);
+}
+
 Array.prototype.flatten = function() {
     return this.reduce((a,b)=>a.concat(b),[])
 }
@@ -449,6 +499,8 @@ const loadBB = async () => {
     };
 }
 
+
+
 let [px, py] = [null, null];
 let rotX = 0;
 let rotY = 0;
@@ -462,6 +514,7 @@ let a = $V([0, 0, 0]);
 let v = $V([0, 0, -0.02]);
 // let v = $V([0, 0, 0]);
 let p = $V([0, 10, 0]);
+let [tx0,tx1] = [0,0];
 c.addEventListener('touchmove', (e) => {
     e.preventDefault();
     let t = e.touches[0];
@@ -475,6 +528,7 @@ c.addEventListener('touchmove', (e) => {
     rotX += dx / c.width * 4;
     rotY += dy / c.height * 4;
     [px, py] = [tx, ty];
+    tx1 = tx;
 });
 let steering = false;
 c.addEventListener('touchstart', (e) => {
@@ -483,10 +537,12 @@ c.addEventListener('touchstart', (e) => {
     let [tx, ty] = [t.clientX, t.clientY];
     if (tx < 100 && ty < 100) {
         chaseCam = !chaseCam
+        perspectiveMatrix = makePerspective(chaseCam ? 120 : 90, c.width / c.height, 0.1, 1000.0);
         return;
     }
     // [startX, startY] = [rotX, rotY];
     steering = true;
+    tx0 = tx;
 })
 c.addEventListener('touchend', (e) => {
     e.preventDefault();
@@ -511,20 +567,27 @@ let drawColorObj = (o) => {
     gl.drawElements(gl.TRIANGLES, o.indices.length, gl.UNSIGNED_SHORT, 0);
 }
 
+const island = makeIsland();
+
 function draw(ppObj, shadowObj, texObj, groundObj) {
     let heading = Vector.k.rotate(rotY,Line.X).rotate(rotX, Line.Y);
+    a = heading.map((e,i)=>i==2?e*-.005:e*-.01).reflectionIn(Plane.YZ).add(grav);
+    sa(bad,'d',`M ${c.width-100} ${c.height-100} l ${Math.cos(rotX-Math.PI/2)*100} ${Math.sin(rotX-Math.PI/2)*100}`);
+    let at = Math.atan2(v.e(3),v.e(1));
+    sa(rad,'d',`M ${c.width-100} ${c.height-100} l ${Math.cos(at)*100} ${Math.sin(at)*100}`);
+    // a.setElements([a.e(1),a.e(2),a.e(3)]);
+    // roll = Math.sin((tx1-tx0)*.01)*-1;
+    roll = -((rotX-Math.PI/2)-at);
     if (!steering) {
         //rotX *= .95;
         rotY *= .95;
-        roll *= .95;
-    } else {
-        // roll = heading.cross(Vector.k).e(2);
-        roll = heading.cross(v.x(-1)).e(2) * 2;
+        // roll *= .95;
     }
 
-    a = heading.x(-.005).reflectionIn(Plane.YZ).add(grav);
+    
 
-    v = v.add(a);
+    // v = v.add(a);
+    v.setElements([v.e(1)+a.e(1),v.e(2)+a.e(2),v.e(3)+a.e(3)]);
     if (Math.hypot(v.e(1),v.e(2),v.e(3)) > 0.3) {
         v = v.toUnitVector().x(.3);
     }
@@ -548,7 +611,7 @@ function draw(ppObj, shadowObj, texObj, groundObj) {
     }
 
     // mvTranslate([i+Math.sin(rotX)*-5, (-j-3) + Math.sin(rotY)*-10, -k-10]);
-    if (chaseCam) { 
+    if (chaseCam) {
         let [bx, by, bz] = p.add(heading.x(10).reflectionIn(Plane.YZ)).elements;
         multMatrix(makeLookAt(bx, by+3, bz, p.e(1), p.e(2), p.e(3), 0, 1, 0));
     } else {
@@ -569,11 +632,15 @@ function draw(ppObj, shadowObj, texObj, groundObj) {
     }
 
     mvPushMatrix();
+    drawIsland(island);
+    mvPopMatrix();
+
+    mvPushMatrix();
     mvTranslate([i,-1.95,k]);
     mvRotate(-rotX, [0,1,0]);
-    // mvRotate(roll, [0,0,1]);
-    // mvRotate(rotY + (Math.PI/16), [1,0,0]);
     multMatrix(Matrix.Diagonal([1,0,1,1]));
+    mvRotate(roll, [0,0,1]);
+    mvRotate(rotY + (Math.PI/16), [1,0,0]);
     // mvRotate(, [0,0,1]);
     drawColorObj(shadowObj);
     mvPopMatrix();
@@ -627,7 +694,7 @@ function draw(ppObj, shadowObj, texObj, groundObj) {
 
 Promise.all([
     loadVColorModel('pplane.obj', colors),
-    loadVColorModel('pplane.obj', colors.map((e,i)=>i%4==3?0.5:0)),
+    loadVColorModel('pplane.obj', colors.map((e,i)=>i%4==3?0.8:0)),
     loadBB(),
     loadVColorModel('groundplane.obj', Array(4).fill([0,0.5,0,1]).flatten())
 ]).then(([pp, shadow, bt, grnd]) => draw(pp, shadow, bt, grnd));
