@@ -1,5 +1,9 @@
 (async () => {
 
+Array.prototype.flatten = function() {
+    return this.reduce((a,b)=>a.concat(b),[])
+}
+
 Matrix.Translation = (v) => {
   if (v.elements.length == 2) {
     let r = Matrix.I(3);
@@ -12,8 +16,6 @@ Matrix.Translation = (v) => {
     [r.elements[0][3],r.elements[1][3],r.elements[2][3]] = [v.elements[0],v.elements[1],v.elements[2]];
     return r;
   }
-
-  throw "Invalid length for Translation";
 }
 
 Matrix.prototype.flatten = function ()
@@ -136,8 +138,8 @@ var parseObj = (objectData) => {
         indices: unpacked.indices
     }
 }
-let sa = (e,k,v) => e.setAttribute(k,v);
-let [c,ui,met,rad,bad] = ['c','s','meter','rad','bad'].map(s=>document.getElementById(s));
+
+let c = document.getElementById('c');
 [c.width, c.height] = [window.innerWidth, window.innerHeight];
 let gl = c.getContext('webgl');
 gl.clearColor(0.39,0.81,0.95,1.0);
@@ -148,34 +150,34 @@ gl.enable(gl.DEPTH_TEST);
 gl.depthFunc(gl.LEQUAL);
 
 let sPrefix = `
-attribute vec3 aVertexPosition;
-uniform mat4 uMVMatrix;
-uniform mat4 uPMatrix;
+attribute vec3 avp;
+uniform mat4 mvm;
+uniform mat4 pm;
 `;
 
 let vertShader = `
 ${sPrefix}
-attribute vec4 aVertexColor;
-varying lowp vec4 vColor;
+attribute vec4 c;
+varying lowp vec4 v;
 void main(void) {
-  gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
-  vColor = aVertexColor;
+  gl_Position = pm * mvm * vec4(avp, 1.0);
+  v = c;
 }
 `;
 
 let fragShader = `
-varying lowp vec4 vColor;
+varying lowp vec4 v;
 void main(void) {
-  gl_FragColor = vColor;
+  gl_FragColor = v;
 }
 `;
 
 let imgVertShader = `
 ${sPrefix}
-attribute vec2 aTextureCoord;
-varying highp vec2 vTextureCoord;
+attribute vec2 tc;
+varying highp vec2 v;
 void main(void) {
-  mat4 i = uMVMatrix;
+  mat4 i = mvm;
   i[0][0] = 1.0;
   i[0][1] = 0.0;
   i[0][2] = 0.0;
@@ -185,15 +187,15 @@ void main(void) {
   i[2][0] = 0.0;
   i[2][1] = 0.0;
   i[2][2] = 1.0;
-  gl_Position = uPMatrix * i * vec4(aVertexPosition, 1.0);
-  vTextureCoord = aTextureCoord;
+  gl_Position = pm * i * vec4(avp, 1.0);
+  v = tc;
 }
 `;
 let imgFragShader = `
-varying highp vec2 vTextureCoord;
-uniform sampler2D uSampler;
+varying highp vec2 v;
+uniform sampler2D uS;
 void main(void) {
-  gl_FragColor = texture2D(uSampler, vTextureCoord);
+  gl_FragColor = texture2D(uS, v);
   if (gl_FragColor.a < 0.4) discard;
 }
 `;
@@ -217,25 +219,25 @@ let makeShader = (vSource, fSource) => {
 let shader = makeShader(vertShader, fragShader),
     imgShader = makeShader(imgVertShader, imgFragShader);
 
-let uniformModelViewMatrix = gl.getUniformLocation(shader, "uMVMatrix");
-let uniformProjectionMatrix = gl.getUniformLocation(shader, "uPMatrix");
-// let uniformSampler = gl.getUniformLocation(shader, "uSampler");
+let uniformModelViewMatrix = gl.getUniformLocation(shader, "mvm");
+let uniformProjectionMatrix = gl.getUniformLocation(shader, "pm");
+// let uniformSampler = gl.getUniformLocation(shader, "uS");
 
-let vertexPositionAttribute = gl.getAttribLocation(shader, "aVertexPosition");
+let vertexPositionAttribute = gl.getAttribLocation(shader, "avp");
 gl.enableVertexAttribArray(vertexPositionAttribute);
 
-let vertexColorAttribute = gl.getAttribLocation(shader, "aVertexColor");
+let vertexColorAttribute = gl.getAttribLocation(shader, "c");
 gl.enableVertexAttribArray(vertexColorAttribute);
 
-let iVertexPosAttr = gl.getAttribLocation(imgShader, 'aVertexPosition');
+let iVertexPosAttr = gl.getAttribLocation(imgShader, 'avp');
 gl.enableVertexAttribArray(iVertexPosAttr);
-let iTexCoordAttr = gl.getAttribLocation(imgShader, 'aTextureCoord');
+let iTexCoordAttr = gl.getAttribLocation(imgShader, 'tc');
 gl.enableVertexAttribArray(iTexCoordAttr);
-let iUMVMatrix = gl.getUniformLocation(imgShader, 'uMVMatrix');
-let iUPMatrix = gl.getUniformLocation(imgShader, 'uPMatrix');
+let iUMVMatrix = gl.getUniformLocation(imgShader, 'mvm');
+let iUPMatrix = gl.getUniformLocation(imgShader, 'pm');
 
-let iSamp = gl.getUniformLocation(imgShader, 'uSampler');
-// let textureCoordAttribute = gl.getAttribLocation(shader, "aTextureCoord");
+let iSamp = gl.getUniformLocation(imgShader, 'uS');
+// let textureCoordAttribute = gl.getAttribLocation(shader, "tc");
 // gl.enableVertexAttribArray(textureCoordAttribute);
 
 
@@ -351,21 +353,13 @@ function mvPushMatrix(m) {
 }
 
 function mvPopMatrix() {
-  if (!mvMatrixStack.length) {
-    throw("Can't pop from an empty matrix stack.");
-  }
-
   mvMatrix = mvMatrixStack.pop();
-  return mvMatrix;
 }
 
 let perspectiveMatrix = makePerspective(120, c.width / c.height, 0.1, 1000.0);
 
 function mvRotate(angle, v) {
-//   var inRadians = angle * Math.PI / 180.0;
-
-  var m = Matrix.Rotation(angle, $V([v[0], v[1], v[2]])).ensure4x4();
-  multMatrix(m);
+  multMatrix(Matrix.Rotation(angle, $V([v[0], v[1], v[2]])).ensure4x4());
 }
 
 
@@ -375,9 +369,9 @@ let indexBuffer;
 let mesh;
 
 // const colors = Array(6).fill([0.0, 0.0, 1.0, 1.0]).reduce((a, b) => a.concat(b), []);
-const colors = (() => { const x = [1,1,1,1,
-                .7,.7,.7,1,
-                1,1,1,1]; return x.concat(x); })();
+const colors = Array(2).fill(0).map(_=>[1,1,1,1,
+    .7,.7,.7,1,
+    1,1,1,1]).flatten();
 
 const loadVColorModel = async (filename, colors) =>{
     const obj = await fetch(filename).then(r => r.text());
@@ -448,10 +442,6 @@ let drawIsland = (o) => {
     gl.drawElements(gl.TRIANGLE_FAN, o.indices.length+1, gl.UNSIGNED_SHORT, 0);
 }
 
-Array.prototype.flatten = function() {
-    return this.reduce((a,b)=>a.concat(b),[])
-}
-
 
 const loadBB = async (path, slot) => {
     const img = new Image();
@@ -504,7 +494,6 @@ let rotX = 0;
 let rotY = 0;
 let startX = null;
 let startY = null;
-let chaseCam = true;
 let roll = 0;
 let grav = $V([0, -0.001, 0]);
 // let grav = $V([0,0,0]);
@@ -516,7 +505,8 @@ let p;
 {
     let t = Math.random()*Math.PI*2;
     let r = Math.random()*900+500;
-    p= $V([Math.cos(t)*r, 30, Math.sin(t)*r]);
+    // p= $V([Math.cos(t)*r, 30, Math.sin(t)*r]);
+    p = $V([20,20,20]);
 }
 let [tx0,tx1] = [0,0];
 c.addEventListener('touchmove', (e) => {
@@ -539,11 +529,6 @@ c.addEventListener('touchstart', (e) => {
     e.preventDefault();
     let t = e.touches[0];
     let [tx, ty] = [t.clientX, t.clientY];
-    if (tx < 100 && ty < 100) {
-        chaseCam = !chaseCam
-        perspectiveMatrix = makePerspective(chaseCam ? 120 : 90, c.width / c.height, 0.1, 1000.0);
-        return;
-    }
     // [startX, startY] = [rotX, rotY];
     steering = true;
     tx0 = tx;
@@ -559,8 +544,7 @@ Vector.prototype.len = function () {
 }
 
 let wavePs = [];
-let pwaveP = p.dup();
-wavePs = Array(50).fill(0).map(_=>[p.e(1)+Math.random()*500-250, p.e(3)+Math.random()*500-250]);
+let pwaveP = null;
 let drawColorObj = (o) => {
     gl.bindBuffer(gl.ARRAY_BUFFER, o.vertexBuffer);
     gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
@@ -594,22 +578,19 @@ function draw(ppObj, shadowObj, texObj, treeObj, mansObj, groundObj) {
         rotY *= .95;
     }
     
-    v.setElements([v.e(1)+a.e(1),v.e(2)+a.e(2),v.e(3)+a.e(3)]);
+    v = v.add(a);
     if (Math.hypot(v.e(1),v.e(2),v.e(3)) > 0.3) {
         v = v.toUnitVector().x(.3);
     }
 
     p = p.add(v);
-    console.log(p.inspect());
     
     if (p.add(mansP.x(-1)).len() < 20) { win(); return; }
-    else if (p.e(2) < 0 && Math.hypot(p.e(1),p.e(2))>150) { lose(); return; }
+    else if (p.e(2) < 0 && Math.hypot(p.e(1),p.e(3))>100) { lose(); return; }
     
     if (p.e(1) < -1500 || p.e(1) > 1500 || p.e(3) < -1500 || p.e(3) > 1500) {p = p.x(0.95); p = p.rotate(Math.PI,Line.Y)}
 
-    if (p.subtract(pwaveP).len() > 100) {
-        console.log(p.inspect());
-        console.log(`recentering waves on ${p.e(1)}, ${p.e(3)}`);
+    if (pwaveP==null||p.subtract(pwaveP).len() > 100) {
         wavePs = Array(50).fill(0).map(_=>[p.e(1)+Math.random()*500-250, p.e(3)+Math.random()*500-250]);
         pwaveP = p.dup();
     }
@@ -626,16 +607,8 @@ function draw(ppObj, shadowObj, texObj, treeObj, mansObj, groundObj) {
         v = v.reflectionIn(Plane.XZ);
     }
 
-    // mvTranslate([i+Math.sin(rotX)*-5, (-j-3) + Math.sin(rotY)*-10, -k-10]);
-    if (chaseCam) {
-        let [bx, by, bz] = p.add(heading.x(10).reflectionIn(Plane.YZ)).elements;
-        multMatrix(makeLookAt(bx, by+3, bz, p.e(1), p.e(2), p.e(3), 0, 1, 0));
-    } else {
-    multMatrix(makeLookAt(30, 30, -10, p.e(1), p.e(2), p.e(3), 0, 1, 0));
-    }
-    // mvTranslate(p.subtract(v.x(-100)).elements);
-    // mvRotate(Math.PI, [0,1,0]);
-
+    let [bx, by, bz] = p.add(heading.x(10).reflectionIn(Plane.YZ)).elements;
+    multMatrix(makeLookAt(bx, by+3, bz, p.e(1), p.e(2), p.e(3), 0, 1, 0));
     // objects
 
     for (let i = -1; i <= 1; i++) {
@@ -697,14 +670,9 @@ function draw(ppObj, shadowObj, texObj, treeObj, mansObj, groundObj) {
         drawBB(texObj);
         mvPopMatrix();
     });
-    gl.bindTexture(gl.TEXTURE_2D, null);
 
     mvPushMatrix();
     mvRotate(Math.PI,[1,0,0]);
-    gl.bindBuffer(gl.ARRAY_BUFFER, treeObj.verticesBuffer);
-    // gl.vertexAttribPointer(iVertexPosAttr, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, treeObj.textureBuffer);
-    // gl.vertexAttribPointer(iTexCoordAttr, 2, gl.FLOAT, false, 0, 0);
     gl.uniform1i(iSamp, 1);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, treeObj.texture);
@@ -715,8 +683,6 @@ function draw(ppObj, shadowObj, texObj, treeObj, mansObj, groundObj) {
 
     mvPushMatrix();
     mvRotate(Math.PI,[1,0,0]);
-    gl.bindBuffer(gl.ARRAY_BUFFER, mansObj.verticesBuffer);
-    gl.bindBuffer(gl.ARRAY_BUFFER, mansObj.textureBuffer);
     gl.uniform1i(iSamp, 2);
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, mansObj.texture);
@@ -729,16 +695,13 @@ function draw(ppObj, shadowObj, texObj, treeObj, mansObj, groundObj) {
     requestAnimationFrame(draw.bind(this, ppObj, shadowObj, texObj, treeObj, mansObj, groundObj));
 }
 
-let grass = await loadBB('wave.png', gl.TEXTURE0);
-let tree = await loadBB('tree.png', gl.TEXTURE1);
-let mans = await loadBB('sos.svg', gl.TEXTURE2);
 let startTime;
 Promise.all([
     loadVColorModel('pplane.obj', colors),
     loadVColorModel('pplane.obj', colors.map((e,i)=>i%4==3?0.8:0)),
-    Promise.resolve(grass),
-    Promise.resolve(tree),
-    Promise.resolve(mans),
+    loadBB('wave.png', gl.TEXTURE0),
+    loadBB('tree.png', gl.TEXTURE1),
+    loadBB('sos.svg', gl.TEXTURE2),
     loadVColorModel('groundplane.obj', Array(4).fill([0,0,0.5,1]).flatten())
 ]).then(([pp, shadow, bt, tree, mans, grnd]) => {startTime=new Date();draw(pp, shadow, bt, tree, mans, grnd)});
 
