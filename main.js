@@ -1,4 +1,4 @@
-(() => {
+(async () => {
 
 Matrix.Translation = (v) => {
   if (v.elements.length == 2) {
@@ -139,13 +139,6 @@ var parseObj = (objectData) => {
 let sa = (e,k,v) => e.setAttribute(k,v);
 let [c,ui,met,rad,bad] = ['c','s','meter','rad','bad'].map(s=>document.getElementById(s));
 [c.width, c.height] = [window.innerWidth, window.innerHeight];
-sa(met,'cx',c.width-100);
-sa(met,'cy',c.height-100);
-sa(met,'r',100);
-sa(rad,'d',`M ${c.width-100} ${c.height-100} l 0 -100`);
-sa(rad,'style','stroke:#ff0000;stroke-width:10');
-sa(bad,'style','stroke:#0000ff;stroke-width:10');
-sa(bad,'d',`M ${c.width-100} ${c.height-100} l 0 -100`);
 let gl = c.getContext('webgl');
 gl.clearColor(0.39,0.81,0.95,1.0);
 gl.clearDepth(1.0);
@@ -201,6 +194,7 @@ varying highp vec2 vTextureCoord;
 uniform sampler2D uSampler;
 void main(void) {
   gl_FragColor = texture2D(uSampler, vTextureCoord);
+  if (gl_FragColor.a < 0.4) discard;
 }
 `;
 
@@ -240,6 +234,7 @@ gl.enableVertexAttribArray(iTexCoordAttr);
 let iUMVMatrix = gl.getUniformLocation(imgShader, 'uMVMatrix');
 let iUPMatrix = gl.getUniformLocation(imgShader, 'uPMatrix');
 
+let iSamp = gl.getUniformLocation(imgShader, 'uSampler');
 // let textureCoordAttribute = gl.getAttribLocation(shader, "aTextureCoord");
 // gl.enableVertexAttribArray(textureCoordAttribute);
 
@@ -386,7 +381,6 @@ const colors = (() => { const x = [1,1,1,1,
 
 const loadVColorModel = async (filename, colors) =>{
     const obj = await fetch(filename).then(r => r.text());
-    console.log(obj);
     const mesh = parseObj(obj);
 
     const vertexBuffer = gl.createBuffer();
@@ -417,58 +411,61 @@ let makeIsland = () => {
         Math.cos(i*2*Math.PI/segments)*r*Math.max(Math.random(),.5),
         0.0,
         Math.sin(i*2*Math.PI/segments)*r*Math.max(Math.random(),.5)]);
-    isPts.unshift([0,50,0]);
+    isPts.unshift([0,0,0]);
 
     const vertexBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-    
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(isPts.flatten()), gl.STATIC_DRAW);
 
     const colorBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(isPts.map(x=>[0,0,0,1])), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(isPts.map((x,i)=>i==0?[0,.4,0,1]:[0.8,0.5,0,1.0]).flatten()), gl.STATIC_DRAW);
+
+    const indexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+    let is = Array(isPts.length).fill(0).map((e,i)=>i);
+    is.push(1);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(is), gl.STATIC_DRAW);
 
     return {
         vertexBuffer,
         colorBuffer,
-        vertices: isPts
+        indexBuffer,
+        indices: isPts
     };
 }
 
 let drawIsland = (o) => {
+    gl.bindBuffer(gl.ARRAY_BUFFER, o.vertexBuffer);
+    gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
     
     gl.bindBuffer(gl.ARRAY_BUFFER, o.colorBuffer);
     gl.vertexAttribPointer(vertexColorAttribute, 4, gl.FLOAT, false, 0, 0);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, o.vertexBuffer);
-    gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
-
-
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, o.indexBuffer);
     gl.uniformMatrix4fv(uniformProjectionMatrix, false, new Float32Array(perspectiveMatrix.flatten()));
     gl.uniformMatrix4fv(uniformModelViewMatrix, false, new Float32Array(mvMatrix.flatten()));
-    gl.drawArrays(gl.TRIANGLE_FAN, 0, o.vertices.length);
-    // gl.drawElements(gl.TRIANGLES, o.indices.length, gl.UNSIGNED_SHORT, 0);
+    gl.drawElements(gl.TRIANGLE_FAN, o.indices.length+1, gl.UNSIGNED_SHORT, 0);
 }
 
 Array.prototype.flatten = function() {
     return this.reduce((a,b)=>a.concat(b),[])
 }
 
-const loadBB = async () => {
+
+const loadBB = async (path, slot) => {
     const img = new Image();
-    img.width = 64;
-    img.height = 128;
+    img.width = 256;
+    img.height = 512;
     const idata = new Promise(async (resolve) => {
-        const t = await fetch('grass_out.svg').then(r=>r.text());
-        img.src = 'data:image/svg+xml;base64,' + window.btoa(unescape(encodeURIComponent(t)));
+        img.src = path;
         img.onload = () => {
             resolve(img);
         };
     });
 
-    const [obj, loadedImg] = await Promise.all([fetch('texplane.obj').then(r=>r.text()), idata]);
-    const mesh = parseObj(obj);
-    console.log(loadedImg);
+    let res = await Promise.all([fetch('texplane.obj').then(r=>r.text()), idata]);
+    const mesh = parseObj(res[0]);
     
     const vBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vBuffer);
@@ -483,9 +480,10 @@ const loadBB = async () => {
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(mesh.indices), gl.STATIC_DRAW);
 
     const texture = gl.createTexture();
+    gl.activeTexture(slot);
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, loadedImg);
+
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, res[1]);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.bindTexture(gl.TEXTURE_2D, null);
@@ -513,7 +511,13 @@ let grav = $V([0, -0.001, 0]);
 let a = $V([0, 0, 0]);
 let v = $V([0, 0, -0.02]);
 // let v = $V([0, 0, 0]);
-let p = $V([0, 10, 0]);
+
+let p;
+{
+    let t = Math.random()*Math.PI*2;
+    let r = Math.random()*900+500;
+    p= $V([Math.cos(t)*r, 30, Math.sin(t)*r]);
+}
 let [tx0,tx1] = [0,0];
 c.addEventListener('touchmove', (e) => {
     e.preventDefault();
@@ -550,10 +554,13 @@ c.addEventListener('touchend', (e) => {
     [px, py] = [null, null];
 })
 
-const grassLocs = [];
-for (let i = 0; i < 50; i++) {
-    grassLocs.push([Math.random()*100 - 50, Math.random()*100, Math.random() < .5]);
+Vector.prototype.len = function () {
+    return Math.hypot.apply(this, this.elements);
 }
+
+let wavePs = [];
+let pwaveP = p.dup();
+wavePs = Array(50).fill(0).map(_=>[p.e(1)+Math.random()*500-250, p.e(3)+Math.random()*500-250]);
 let drawColorObj = (o) => {
     gl.bindBuffer(gl.ARRAY_BUFFER, o.vertexBuffer);
     gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
@@ -569,35 +576,44 @@ let drawColorObj = (o) => {
 
 const island = makeIsland();
 
-function draw(ppObj, shadowObj, texObj, groundObj) {
+let drawBB = (to) => {
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, to.indexBuffer);
+    gl.uniformMatrix4fv(iUPMatrix, false, new Float32Array(perspectiveMatrix.flatten()));
+    gl.uniformMatrix4fv(iUMVMatrix, false, new Float32Array(mvMatrix.flatten()));
+    gl.drawElements(gl.TRIANGLES, to.indices.length, gl.UNSIGNED_SHORT, 0);
+}
+
+const mansP = $V([20,-13,0]);
+
+function draw(ppObj, shadowObj, texObj, treeObj, mansObj, groundObj) {
     let heading = Vector.k.rotate(rotY,Line.X).rotate(rotX, Line.Y);
-    a = heading.map((e,i)=>i==2?e*-.005:e*-.01).reflectionIn(Plane.YZ).add(grav);
-    sa(bad,'d',`M ${c.width-100} ${c.height-100} l ${Math.cos(rotX-Math.PI/2)*100} ${Math.sin(rotX-Math.PI/2)*100}`);
+    a = heading.x(-.005).reflectionIn(Plane.YZ).add(grav);
     let at = Math.atan2(v.e(3),v.e(1));
-    sa(rad,'d',`M ${c.width-100} ${c.height-100} l ${Math.cos(at)*100} ${Math.sin(at)*100}`);
-    // a.setElements([a.e(1),a.e(2),a.e(3)]);
-    // roll = Math.sin((tx1-tx0)*.01)*-1;
     roll = -((rotX-Math.PI/2)-at);
     if (!steering) {
-        //rotX *= .95;
         rotY *= .95;
-        // roll *= .95;
     }
-
     
-
-    // v = v.add(a);
     v.setElements([v.e(1)+a.e(1),v.e(2)+a.e(2),v.e(3)+a.e(3)]);
     if (Math.hypot(v.e(1),v.e(2),v.e(3)) > 0.3) {
         v = v.toUnitVector().x(.3);
     }
 
     p = p.add(v);
+    console.log(p.inspect());
+    
+    if (p.add(mansP.x(-1)).len() < 20) { win(); return; }
+    else if (p.e(2) < 0 && Math.hypot(p.e(1),p.e(2))>150) { lose(); return; }
+    
+    if (p.e(1) < -1500 || p.e(1) > 1500 || p.e(3) < -1500 || p.e(3) > 1500) {p = p.x(0.95); p = p.rotate(Math.PI,Line.Y)}
 
-    // p[0] += v[0]
-    // p[1] += v[1]
-    // p[2] += v[2]
-    // rotX += Math.PI / 32;
+    if (p.subtract(pwaveP).len() > 100) {
+        console.log(p.inspect());
+        console.log(`recentering waves on ${p.e(1)}, ${p.e(3)}`);
+        wavePs = Array(50).fill(0).map(_=>[p.e(1)+Math.random()*500-250, p.e(3)+Math.random()*500-250]);
+        pwaveP = p.dup();
+    }
+
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.useProgram(shader);
     loadIdentity();
@@ -625,13 +641,16 @@ function draw(ppObj, shadowObj, texObj, groundObj) {
     for (let i = -1; i <= 1; i++) {
         for (let j = -1; j <= 1; j++) {
             mvPushMatrix();
-            mvTranslate([0+i*100,-2,-80+j*100]);
+            // mvTranslate([0+i*100,-3.1,-80+j*100]);
+            mvTranslate([0,-3,0])
+            multMatrix(Matrix.Diagonal([20,1,20,1]))
             drawColorObj(groundObj);
             mvPopMatrix();
         }
     }
 
     mvPushMatrix();
+    mvTranslate([0,-2,0]);
     drawIsland(island);
     mvPopMatrix();
 
@@ -652,7 +671,6 @@ function draw(ppObj, shadowObj, texObj, groundObj) {
     mvRotate(-rotX, [0,1,0]);
     mvRotate(roll, [0,0,1]);
     mvRotate(rotY + (Math.PI/16), [1,0,0]);
-    // mvRotate(, [0,0,1]);
     drawColorObj(ppObj);
     mvPopMatrix();
 
@@ -669,34 +687,75 @@ function draw(ppObj, shadowObj, texObj, groundObj) {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texObj.texture);
-    gl.uniform1i(gl.getUniformLocation(imgShader, 'uSampler'), 0);
+    gl.uniform1i(iSamp, 0);
 
-    grassLocs.forEach(([x, y, flip]) => {
+    wavePs.forEach(([x, y]) => {
         mvPushMatrix();
-        mvTranslate([x,0,-y]);
+        mvTranslate([x,4.5,y]);
         mvRotate(Math.PI,[1,0,0]);
-        if (flip) {
-            mvRotate(Math.PI,[0,1,0]);
-        }
-
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, texObj.indexBuffer);
-        gl.uniformMatrix4fv(iUPMatrix, false, new Float32Array(perspectiveMatrix.flatten()));
-        gl.uniformMatrix4fv(iUMVMatrix, false, new Float32Array(mvMatrix.flatten()));
-        gl.drawElements(gl.TRIANGLES, texObj.indices.length, gl.UNSIGNED_SHORT, 0);
+        multMatrix(1/4);
+        drawBB(texObj);
         mvPopMatrix();
     });
-    
+    gl.bindTexture(gl.TEXTURE_2D, null);
+
+    mvPushMatrix();
+    mvRotate(Math.PI,[1,0,0]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, treeObj.verticesBuffer);
+    // gl.vertexAttribPointer(iVertexPosAttr, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, treeObj.textureBuffer);
+    // gl.vertexAttribPointer(iTexCoordAttr, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform1i(iSamp, 1);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, treeObj.texture);
+    mvTranslate([0,-17,0]);
+    multMatrix(1/10);
+    drawBB(treeObj);
+    mvPopMatrix();
+
+    mvPushMatrix();
+    mvRotate(Math.PI,[1,0,0]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mansObj.verticesBuffer);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mansObj.textureBuffer);
+    gl.uniform1i(iSamp, 2);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, mansObj.texture);
+    mvTranslate(mansP.elements);
+    multMatrix(1/8);
+    drawBB(mansObj);
 
     mvPopMatrix();
 
-    requestAnimationFrame(draw.bind(this, ppObj, shadowObj, texObj, groundObj));
+    requestAnimationFrame(draw.bind(this, ppObj, shadowObj, texObj, treeObj, mansObj, groundObj));
 }
 
+let grass = await loadBB('wave.png', gl.TEXTURE0);
+let tree = await loadBB('tree.png', gl.TEXTURE1);
+let mans = await loadBB('sos.svg', gl.TEXTURE2);
+let startTime;
 Promise.all([
     loadVColorModel('pplane.obj', colors),
     loadVColorModel('pplane.obj', colors.map((e,i)=>i%4==3?0.8:0)),
-    loadBB(),
-    loadVColorModel('groundplane.obj', Array(4).fill([0,0.5,0,1]).flatten())
-]).then(([pp, shadow, bt, grnd]) => draw(pp, shadow, bt, grnd));
+    Promise.resolve(grass),
+    Promise.resolve(tree),
+    Promise.resolve(mans),
+    loadVColorModel('groundplane.obj', Array(4).fill([0,0,0.5,1]).flatten())
+]).then(([pp, shadow, bt, tree, mans, grnd]) => {startTime=new Date();draw(pp, shadow, bt, tree, mans, grnd)});
+
+let sett = (t) => document.getElementById('res').innerText=`time: ${Math.round((new Date() - t)/1000)-2}s`;
+function win() {
+    document.body.style.backgroundColor="#ebb200";
+    c.style.opacity = 0;
+    setTimeout(() => {document.querySelectorAll('svg').forEach(e=>{e.style.width=c.width;e.style.display="block"});
+    document.querySelectorAll('.lose').forEach(e=>e.style.display="none");sett(startTime);}, 2000);
+    
+}
+
+function lose() {
+    document.body.style.backgroundColor="#000080";
+    c.style.opacity = 0;
+    setTimeout(() => {document.querySelectorAll('svg').forEach(e=>{e.style.width=c.width;e.style.display="block"});
+    document.getElementById('win').style.display="none";sett(startTime);}, 2000);
+}
 
 })();
