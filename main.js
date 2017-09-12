@@ -505,8 +505,7 @@ let p;
 {
     let t = Math.random()*Math.PI*2;
     let r = Math.random()*900+500;
-    // p= $V([Math.cos(t)*r, 30, Math.sin(t)*r]);
-    p = $V([20,20,20]);
+    p= $V([Math.cos(t)*r, 30, Math.sin(t)*r]);
 }
 let [tx0,tx1] = [0,0];
 c.addEventListener('touchmove', (e) => {
