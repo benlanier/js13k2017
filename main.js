@@ -519,9 +519,13 @@ let p;
     p= $V([Math.cos(t)*r, 30, Math.sin(t)*r]);
 }
 let [tx0,tx1] = [0,0];
-c.addEventListener('touchmove', (e) => {
+let steering = false;
+const moveHandler = (e) => {
     e.preventDefault();
-    let t = e.touches[0];
+    let t = !!e.touches ? e.touches[0] : e;
+    if (!e.touches && !steering) {
+        return;
+    }
     let [tx, ty] = [t.clientX, t.clientY];
     if (px === null) {
         [px, py] = [tx, ty];
@@ -533,11 +537,13 @@ c.addEventListener('touchmove', (e) => {
     rotY += dy / c.height * 4;
     [px, py] = [tx, ty];
     tx1 = tx;
-});
-let steering = false;
-c.addEventListener('touchstart', (e) => {
+};
+c.addEventListener('touchmove', moveHandler);
+c.addEventListener('mousemove', moveHandler);
+
+const downHandler = (e) => {
     e.preventDefault();
-    let t = e.touches[0];
+    let t = !!e.touches ? e.touches[0] : e;
     let [tx, ty] = [t.clientX, t.clientY];
     if (tx < 100 && ty < 100) {
         chaseCam = !chaseCam
@@ -547,12 +553,16 @@ c.addEventListener('touchstart', (e) => {
     // [startX, startY] = [rotX, rotY];
     steering = true;
     tx0 = tx;
-})
-c.addEventListener('touchend', (e) => {
+};
+c.addEventListener('touchstart', downHandler);
+c.addEventListener('mousedown', downHandler);
+const upHandler = (e) => {
     e.preventDefault();
     steering = false;
     [px, py] = [null, null];
-})
+};
+c.addEventListener('touchend', upHandler);
+c.addEventListener('mouseup', upHandler);
 
 Vector.prototype.len = function () {
     return Math.hypot.apply(this, this.elements);
